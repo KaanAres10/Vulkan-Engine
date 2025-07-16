@@ -1,5 +1,4 @@
-
-# Add source to this project's executable.
+# Add source to project's executable.
 add_executable (engine 
   main.cpp
   vk_types.h
