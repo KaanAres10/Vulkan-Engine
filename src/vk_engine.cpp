@@ -66,6 +66,14 @@ void VulkanEngine::init()
 
     init_default_data();
 
+    _lastFrameTime = std::chrono::high_resolution_clock::now();
+    _deltaTime = 0.f;
+
+    mainCamera.position = glm::vec3(0, 0, 5);
+
+    mainCamera.pitch = 0;
+    mainCamera.yaw = 0;
+
     // everything went fine
     _isInitialized = true;
 }
@@ -990,20 +998,25 @@ void VulkanEngine::cleanup()
 
 void VulkanEngine::update_scene()
 {
-    mainDrawContext.OpaqueSurfaces.clear();
+    mainCamera.update(_deltaTime);
 
-    loadedNodes["Suzanne"]->Draw(glm::mat4{ 1.f }, mainDrawContext);
+    glm::mat4 view = mainCamera.getViewMatrix();
 
-    sceneData.view = glm::translate(glm::vec3{ 0, 0 , -5 });
+    glm::mat4 projection = glm::perspective(glm::radians(70.f), (float)_windowExtent.width / (float)_windowExtent.height, 10000.f, 0.1f);
+    
+    projection[1][1] *= -1;
 
-    sceneData.proj = glm::perspective(glm::radians(70.f), (float)_windowExtent.width / (float)_windowExtent.height, 10000.f, 0.1f);
-
-    sceneData.proj[1][1] *= -1;
-    sceneData.viewproj = sceneData.proj * sceneData.view;
+    sceneData.view = view;
+    sceneData.proj = projection;
+    sceneData.viewproj = projection * view;
 
     sceneData.ambientColor = glm::vec4(.1f);
     sceneData.sunlightColor = glm::vec4(1.f);
     sceneData.sunlightDirection = glm::vec4(0, 1, 0.5, 1.f);
+
+    mainDrawContext.OpaqueSurfaces.clear();
+
+    loadedNodes["Suzanne"]->Draw(glm::mat4{ 1.f }, mainDrawContext);
 
     for (int x = -3; x < 3; x++) {
         glm::mat4 scale = glm::scale(glm::vec3{ 0.2 });
@@ -1044,11 +1057,20 @@ void VulkanEngine::run()
 
     // main loop
     while (!bQuit) {
+        auto now = std::chrono::high_resolution_clock::now();
+        _deltaTime = std::chrono::duration<float>(now - _lastFrameTime).count();
+        _lastFrameTime = now;
+        fmt::print("Δt = {:.4f} s\n", _deltaTime);
+
         // Handle events on queue
         while (SDL_PollEvent(&e) != 0) {
             // close the window when user alt-f4s or clicks the X button
             if (e.type == SDL_QUIT)
                 bQuit = true;
+
+            mainCamera.processSDLEvent(e);
+
+            ImGui_ImplSDL2_ProcessEvent(&e);
 
             if (e.type == SDL_WINDOWEVENT) {
                 if (e.window.event == SDL_WINDOWEVENT_MINIMIZED) {
@@ -1059,7 +1081,6 @@ void VulkanEngine::run()
                 }
             }
 
-            ImGui_ImplSDL2_ProcessEvent(&e);
         }
 
         // do not draw if we are minimized
@@ -1076,6 +1097,11 @@ void VulkanEngine::run()
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        if (ImGui::Begin("Camera")) {
+            ImGui::SliderFloat("Move Speed", &mainCamera.movementSpeed, 0.0f, 10.0f, "%.2f");
+            ImGui::SliderFloat("Mouse Sensitivity", &mainCamera.mouseSensitivity, 0.0001f, 0.05f, "%.4f");
+        }
 
         if (ImGui::Begin("background")) {
             ImGui::SliderFloat("Render Scale", &renderScale, 0.3f, 1.f);

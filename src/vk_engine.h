@@ -3,6 +3,7 @@
 #include <vk_types.h>
 #include <vk_descriptors.h>
 #include <vk_loader.h>
+#include <camera.h>
 
 struct ComputePushConstants {
 	glm::vec4 data1;
@@ -97,6 +98,11 @@ public:
 	int _frameNumber {0};
 	bool stop_rendering{ false };
 	VkExtent2D _windowExtent{ 1700 , 900 };
+
+	Camera mainCamera;
+
+	std::chrono::high_resolution_clock::time_point _lastFrameTime;
+	float _deltaTime = 0.f;
 
 	struct SDL_Window* _window{ nullptr };
 
