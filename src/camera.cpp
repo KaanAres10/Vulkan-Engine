@@ -27,26 +27,49 @@ void Camera::clampPitch()
 
 void Camera::processSDLEvent(SDL_Event& e)
 {
-	if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
-		bool isDown = (e.type == SDL_KEYDOWN);
-		switch (e.key.keysym.sym)
-		{
-		case SDLK_w: moveForward = isDown; break;
-		case SDLK_s: moveBackward = isDown; break;
-		case SDLK_a: moveLeft = isDown; break;
-		case SDLK_d: moveRight = isDown; break;
+    if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+        bool down = (e.type == SDL_MOUSEBUTTONDOWN);
+        if (e.button.button == SDL_BUTTON_LEFT)  m_leftMouseDown = down;
+        if (e.button.button == SDL_BUTTON_RIGHT) m_rightMouseDown = down;
+    }
 
-		default:
-			break;
+    if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
+        bool isDown = (e.type == SDL_KEYDOWN);
+        switch (e.key.keysym.sym) {
+        case SDLK_w: moveForward = isDown; break;
+        case SDLK_s: moveBackward = isDown; break;
+        case SDLK_a: moveLeft = isDown; break;
+        case SDLK_d: moveRight = isDown; break;
+        }
+    }
+
+    if (e.type == SDL_MOUSEMOTION) {
+        if (m_leftMouseDown) {
+           yaw += e.motion.xrel * mouseSensitivity;
+           clampPitch();
 		}
-	}
+        if (m_rightMouseDown) {
+            yaw += e.motion.xrel * mouseSensitivity;
+            pitch -= e.motion.yrel * mouseSensitivity;
+            clampPitch();
+        }
+    }
 
-	if (e.type == SDL_MOUSEMOTION) {
-		yaw += (float)e.motion.xrel / 200.f;
-		pitch -= (float)e.motion.yrel / 200.f;
-		clampPitch();
-	}
+
+
+    if (e.type == SDL_MOUSEWHEEL && m_rightMouseDown) {
+        float delta = e.wheel.y * 0.5f;    
+        movementSpeed = glm::clamp(movementSpeed + delta,
+            minSpeed, maxSpeed);
+    }
 }
+
+
+void Camera::resetInput() {
+    moveForward = moveBackward = moveLeft = moveRight = false;
+    m_leftMouseDown = m_rightMouseDown = false;
+}
+
 
 glm::mat4 Camera::getViewMatrix() const
 {
