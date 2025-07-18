@@ -23,6 +23,7 @@
 
 #include <glm/gtx/transform.hpp>
 
+#include "imgui_impl_vulkan.h"
 
 VulkanEngine* loadedEngine = nullptr;
 
@@ -49,6 +50,8 @@ void VulkanEngine::init()
         _windowExtent.width,
         _windowExtent.height,
         window_flags);
+
+    _mainWindowID = SDL_GetWindowID(_window);
 
 	init_vulkan();
 
@@ -165,6 +168,8 @@ void VulkanEngine::init_swapchain()
     drawImageUsages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     drawImageUsages |= VK_IMAGE_USAGE_STORAGE_BIT;
     drawImageUsages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    drawImageUsages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
 
     VkImageCreateInfo rimg_info = vkinit::image_create_info(_drawImage.imageFormat, drawImageUsages, drawImageExtent);
 
@@ -206,7 +211,8 @@ void VulkanEngine::init_descriptors()
 {
     std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> sizes = {
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1}
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+       { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }   // <-- add this
     };
 
     globalDescriptorAllocator.init(_device, 10, sizes);
@@ -498,6 +504,26 @@ void VulkanEngine::init_default_data()
 
         loadedNodes[m->name] = std::move(newNode);
     }
+
+    _errorCheckerboardDS = ImGui_ImplVulkan_AddTexture(
+        _defaultSamplerNearest,                                // VkSampler
+        _errorCheckerboardImage.imageView,                     // VkImageView
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL               // the layout we’ll sample from
+    );
+
+    _viewportTex.Image = _drawImage.image;
+    _viewportTex.ImageView = _drawImage.imageView;
+    _viewportTex.Sampler = _defaultSamplerLinear;
+
+    _viewportTex.Width = static_cast<int>(_drawExtent.width);
+    _viewportTex.Height = static_cast<int>(_drawExtent.height);
+    _viewportTex.Channels = 4;
+
+    _viewportTex.DS = ImGui_ImplVulkan_AddTexture(
+        _viewportTex.Sampler,
+        _viewportTex.ImageView,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    );
 }
 
 AllocatedBuffer VulkanEngine::create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
@@ -639,6 +665,14 @@ void VulkanEngine::destroy_image(const AllocatedImage& img)
     vmaDestroyImage(_allocator, img.image, img.allocation);
 }
 
+bool VulkanEngine::point_in_viewport(int mx, int my) const {
+    return  mx >= _viewportPos.x &&
+        my >= _viewportPos.y &&
+        mx < _viewportPos.x + _viewportSize.x &&
+        my < _viewportPos.y + _viewportSize.y;
+}
+
+
 void VulkanEngine::init_imgui()
 {
     VkDescriptorPoolSize pool_sizes[] = { {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
@@ -664,7 +698,7 @@ void VulkanEngine::init_imgui()
     VK_CHECK(vkCreateDescriptorPool(_device, &pool_info, nullptr, &imguiPool));
 
     ImGui::CreateContext();
-
+  
     ImGui_ImplSDL2_InitForVulkan(_window);
 
     ImGui_ImplVulkan_InitInfo init_info = {};
@@ -685,7 +719,23 @@ void VulkanEngine::init_imgui()
 
     ImGui_ImplVulkan_Init(&init_info);
 
-    ImGui_ImplVulkan_CreateFontsTexture();
+    ImGuiIO& io = ImGui::GetIO();
+    ImFont* font1 = io.Fonts->AddFontFromFileTTF(
+        "..\\..\\assets\\fonts\\Roboto_Condensed-Black.ttf",
+        16.0f  // size in pixels
+    );
+    ImFont* font2 = io.Fonts->AddFontFromFileTTF(
+        "..\\..\\assets\\fonts\\BitcountSingle_Cursive-Black.ttf",
+        16.0f  // size in pixels
+    );
+
+    ImFont* font3 = io.Fonts->AddFontFromFileTTF(
+        "..\\..\\assets\\fonts\\Lato-Black.ttf",
+        16.0f  // size in pixels
+    );
+
+
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     _mainDeletionQueue.push_function([=]() {
         ImGui_ImplVulkan_Shutdown();
@@ -831,9 +881,17 @@ void VulkanEngine::draw()
 
     vkutil::copy_image_to_image(cmd, _drawImage.image, _swapchainImages[swapchainImageIndex], _drawExtent, _swapchainExtent);
 
+
+    vkutil::transition_image(cmd,
+        _drawImage.image,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
     vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
+
     draw_imgui(cmd, _swapchainImageViews[swapchainImageIndex]);
+
 
     vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
@@ -953,7 +1011,14 @@ void VulkanEngine::draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
 
     vkCmdBeginRendering(cmd, &renderInfo);
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, VK_NULL_HANDLE);
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    {
+        ImGui::UpdatePlatformWindows();            // create/update OS‐level windows
+        ImGui::RenderPlatformWindowsDefault();     // render them
+    }
 
     vkCmdEndRendering(cmd);
 }
@@ -1060,28 +1125,69 @@ void VulkanEngine::run()
         auto now = std::chrono::high_resolution_clock::now();
         _deltaTime = std::chrono::duration<float>(now - _lastFrameTime).count();
         _lastFrameTime = now;
-        fmt::print("Δt = {:.4f} s\n", _deltaTime);
 
-        // Handle events on queue
-        while (SDL_PollEvent(&e) != 0) {
-            // close the window when user alt-f4s or clicks the X button
-            if (e.type == SDL_QUIT)
+        while (SDL_PollEvent(&e)) {
+            // quit
+            if (e.type == SDL_QUIT ||
+                (e.type == SDL_WINDOWEVENT &&
+                    e.window.windowID == _mainWindowID &&
+                    e.window.event == SDL_WINDOWEVENT_CLOSE)) {
                 bQuit = true;
-
-            mainCamera.processSDLEvent(e);
+            }
 
             ImGui_ImplSDL2_ProcessEvent(&e);
 
-            if (e.type == SDL_WINDOWEVENT) {
-                if (e.window.event == SDL_WINDOWEVENT_MINIMIZED) {
-                    stop_rendering = true;
+
+            // Check for camera activation/deactivation
+            switch (e.type) {
+            case SDL_MOUSEBUTTONDOWN:
+                if (e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_LEFT) {
+                    if (point_in_viewport(e.button.x, e.button.y)) {
+                        _cameraActive = true;
+                    }
+                    else {
+                        _cameraActive = false;
+                        mainCamera.resetInput();
+                    }
                 }
-                if (e.window.event == SDL_WINDOWEVENT_RESTORED) {
-                    stop_rendering = false;
+                break;
+
+            case SDL_MOUSEBUTTONUP:
+                if (e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_LEFT) {
+                    _cameraActive = false;
+                    mainCamera.processSDLEvent(e);
+                    mainCamera.resetInput();
+                }
+                break;
+
+            default:
+                break;
+            }
+
+            // Forward *motion & key* events only while active
+            if (_cameraActive) {
+                if (e.type == SDL_MOUSEMOTION ||
+                    e.type == SDL_MOUSEBUTTONDOWN ||
+                    e.type == SDL_MOUSEBUTTONUP ||
+                    e.type == SDL_KEYDOWN ||
+                    e.type == SDL_MOUSEWHEEL)
+                {
+                    mainCamera.processSDLEvent(e);
                 }
             }
 
+            // KEYUP must go through so movement stops even if released after deactivation
+            if (e.type == SDL_KEYUP) {
+                mainCamera.processSDLEvent(e);
+            }
+
+            // minimize/restore 
+            if (e.type == SDL_WINDOWEVENT) {
+                if (e.window.event == SDL_WINDOWEVENT_MINIMIZED)  stop_rendering = true;
+                if (e.window.event == SDL_WINDOWEVENT_RESTORED)   stop_rendering = false;
+            }
         }
+
 
         // do not draw if we are minimized
         if (stop_rendering) {
@@ -1098,25 +1204,83 @@ void VulkanEngine::run()
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
+  
+        // ---------- DockSpace ------------------
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::SetNextWindowViewport(viewport->ID);
+
+        ImGuiWindowFlags host_flags =
+            ImGuiWindowFlags_NoDocking
+            | ImGuiWindowFlags_NoTitleBar
+            | ImGuiWindowFlags_NoCollapse
+            | ImGuiWindowFlags_NoResize
+            | ImGuiWindowFlags_NoMove
+            | ImGuiWindowFlags_NoBringToFrontOnFocus
+            | ImGuiWindowFlags_NoNavFocus;
+     
+        ImGui::Begin("DockHostWindow", nullptr, host_flags);
+        static ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+        ImGui::End();
+
+        // -------------- Viewport ----------------
+        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+        ImGui::Begin("Viewport", nullptr,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+        _viewportPos = ImGui::GetWindowPos();   
+        _viewportSize = ImGui::GetWindowSize();
+
+        _viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+        if (_cameraActive && !_viewportFocused) {
+            _cameraActive = false;
+            mainCamera.resetInput();
+        }
+        ImGui::Image((ImTextureID)_viewportTex.DS,
+            ImVec2(1920, 1080));
+        ImGui::End();
+
+		// -------------- Camera ---------------------
+        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Camera")) {
-            ImGui::SliderFloat("Move Speed", &mainCamera.movementSpeed, 0.0f, 10.0f, "%.2f");
+            ImGui::SliderFloat("Move Speed", &mainCamera.movementSpeed, 0.1f, 50.0f, "%.2f");
             ImGui::SliderFloat("Mouse Sensitivity", &mainCamera.mouseSensitivity, 0.0001f, 0.05f, "%.4f");
         }
+        ImGui::End();
 
-        if (ImGui::Begin("background")) {
+		// -------------- Background Effects ---------------------
+        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Background")) {
             ImGui::SliderFloat("Render Scale", &renderScale, 0.3f, 1.f);
             ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
-
             ImGui::Text("Selected effect: ", selected.name);
-
             ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
-
             ImGui::InputFloat4("data1", (float*)&selected.data.data1);
             ImGui::InputFloat4("data2", (float*)&selected.data.data2);
             ImGui::InputFloat4("data3", (float*)&selected.data.data3);
             ImGui::InputFloat4("data4", (float*)&selected.data.data4);
         }
         ImGui::End();
+
+		// -------------- Assets ---------------------
+		ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Assets")) {
+         // Do nothing for now, but you can add asset management UI here
+			ImGui::Text("Assets management will be implemented later.");
+		}
+		ImGui::End();
+
+ 
+		// ----------- Style Editor ---------------
+        if (ImGui::Begin("Style Editor"))         
+        {
+            ImGui::ShowStyleEditor();                         
+        }
+        ImGui::End();
+
 
         ImGui::Render();
 

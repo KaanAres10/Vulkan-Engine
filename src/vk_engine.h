@@ -4,6 +4,7 @@
 #include <vk_descriptors.h>
 #include <vk_loader.h>
 #include <camera.h>
+#include "imgui.h"              
 
 struct ComputePushConstants {
 	glm::vec4 data1;
@@ -92,6 +93,19 @@ struct DrawContext {
 
 constexpr unsigned int FRAME_OVERLAP = 3;
 
+struct MyTextureData
+{
+	VkDescriptorSet DS;
+	int             Width;
+	int             Height;
+	int             Channels;   
+
+	VkImageView     ImageView;
+	VkImage         Image;
+	VkSampler       Sampler;
+
+	MyTextureData() { memset(this, 0, sizeof(*this)); }
+};
 class VulkanEngine {
 public:
 	bool _isInitialized{ false };
@@ -173,7 +187,23 @@ public:
 
 	DrawContext mainDrawContext;
 	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
-	
+
+	MyTextureData _viewportTex{};
+
+	VkDescriptorSet _errorCheckerboardDS = VK_NULL_HANDLE;
+
+	Uint32 _mainWindowID = 0;
+
+	bool _viewportFocused = false;
+
+	ImVec2 _viewportPos{ 0,0 };
+	ImVec2 _viewportSize{ 0,0 };
+
+
+	bool   _cameraActive = false;   // new: are we currently capturing input for the camera?
+
+	ImVec2 _viewportContentMin{ 0, 0 };
+	ImVec2 _viewportContentMax{ 0, 0 };
 	void update_scene();
 
 	bool resize_requested{ false };
@@ -198,6 +228,7 @@ public:
 	void run();
 
 private:
+
 	void init_vulkan();
 	void init_swapchain();
 	void init_commands();
@@ -230,4 +261,7 @@ private:
 	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
 	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
 	void destroy_image(const AllocatedImage& img);
+
+	bool point_in_viewport(int mx, int my) const;
+
 };
