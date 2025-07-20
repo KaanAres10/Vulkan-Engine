@@ -1,10 +1,27 @@
 ﻿#pragma once
 
 #include <vk_types.h>
+
+#include <deque>
+#include <functional>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <vk_mem_alloc.h>
+
+
 #include <vk_descriptors.h>
 #include <vk_loader.h>
 #include <camera.h>
+#include <vk_pipelines.h>
 #include "imgui.h"              
+
+struct MeshAsset;
+namespace fastgltf {
+struct Mesh;
+}
 
 struct ComputePushConstants {
 	glm::vec4 data1;
@@ -86,10 +103,24 @@ struct MeshNode : public Node {
 	virtual void Draw(const glm::mat4& topMatrix, DrawContext& ctx) override;
 };
 
+struct RenderObject {
+	uint32_t indexCount;
+	uint32_t firstIndex;
+	VkBuffer indexBuffer;
+
+	MaterialInstance* material;
+	Bounds bounds;
+
+	glm::mat4 transform;
+	VkDeviceAddress vertexBufferAddress;
+};
+
 struct DrawContext {
 	std::vector<RenderObject> OpaqueSurfaces;
 	std::vector<RenderObject> TransparentSurfaces;
 };
+
+
 
 constexpr unsigned int FRAME_OVERLAP = 2;
 

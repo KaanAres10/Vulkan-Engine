@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include <vector>
+#include <deque>
+#include <span>
 #include <vk_types.h>
 
 struct DescriptorLayoutBuilder {
