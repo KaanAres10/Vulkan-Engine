@@ -22,7 +22,6 @@ struct ComputeEffect {
 	ComputePushConstants data;
 };
 
-
 struct DeletionQueue {
 	std::deque<std::function<void()>> deletors;
 
@@ -89,9 +88,10 @@ struct MeshNode : public Node {
 
 struct DrawContext {
 	std::vector<RenderObject> OpaqueSurfaces;
+	std::vector<RenderObject> TransparentSurfaces;
 };
 
-constexpr unsigned int FRAME_OVERLAP = 3;
+constexpr unsigned int FRAME_OVERLAP = 2;
 
 struct MyTextureData
 {
@@ -106,6 +106,15 @@ struct MyTextureData
 
 	MyTextureData() { memset(this, 0, sizeof(*this)); }
 };
+
+struct EngineStats {
+	float frameTime;
+	int triangle_count;
+	int drawcall_count;
+	float scene_update_time;
+	float mesh_draw_time;
+};
+
 class VulkanEngine {
 public:
 	bool _isInitialized{ false };
@@ -113,12 +122,42 @@ public:
 	bool stop_rendering{ false };
 	VkExtent2D _windowExtent{ 1700 , 900 };
 
+	uint32_t _screenWidth{ 2560 };
+	uint32_t _screenHeight{ 1440 };
+
 	Camera mainCamera;
 
 	std::chrono::high_resolution_clock::time_point _lastFrameTime;
 	float _deltaTime = 0.f;
 
 	struct SDL_Window* _window{ nullptr };
+
+	EngineStats stats;
+
+
+	/*
+	*** ------------- VIEWPORT ------------------ ***
+	*/
+	Uint32 _mainWindowID = 0;
+
+	MyTextureData _viewportTex{};
+
+	bool _viewportFocused = false;
+
+	ImVec2 _viewportPos{ 0,0 };
+	
+	ImVec2 _viewportSize{ 0,0 };
+
+	ImVec2 _viewportContentMin{ 0, 0 };
+
+	ImVec2 _viewportContentMax{ 0, 0 };
+
+	bool   _cameraActive = false;
+
+	bool _isBothRender{ false };
+
+	bool resize_requested{ false };
+
 
 	VkInstance _instance;
 	VkDebugUtilsMessengerEXT _debug_messenger;
@@ -188,30 +227,23 @@ public:
 	DrawContext mainDrawContext;
 	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
 
-	MyTextureData _viewportTex{};
+	std::unordered_map<std::string, std::shared_ptr<LoadedGLTF>> loadedScenes;
 
-	VkDescriptorSet _errorCheckerboardDS = VK_NULL_HANDLE;
-
-	Uint32 _mainWindowID = 0;
-
-	bool _viewportFocused = false;
-
-	ImVec2 _viewportPos{ 0,0 };
-	ImVec2 _viewportSize{ 0,0 };
-
-
-	bool   _cameraActive = false;   // new: are we currently capturing input for the camera?
-
-	ImVec2 _viewportContentMin{ 0, 0 };
-	ImVec2 _viewportContentMax{ 0, 0 };
 	void update_scene();
-
-	bool resize_requested{ false };
-
 
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
 	GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+
+	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
+
+	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+
+	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+
+	void destroy_image(const AllocatedImage& img);
+
+	void destroy_buffer(const AllocatedBuffer& buffer);
 
 	static VulkanEngine& Get();
 
@@ -250,18 +282,9 @@ private:
 
 	void draw_geometry(VkCommandBuffer cmd);
 
-	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
-
-	void destroy_buffer(const AllocatedBuffer& buffer);
-
 	void init_mesh_pipeline();
 
 	void init_default_data();
 
-	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
-	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
-	void destroy_image(const AllocatedImage& img);
-
 	bool point_in_viewport(int mx, int my) const;
-
 };
