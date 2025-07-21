@@ -14,6 +14,7 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_vulkan.h"
 #include <glm/gtx/transform.hpp>
+#include "ImGuizmo.h"
 
 VulkanEngine* loadedEngine = nullptr;
 VulkanEngine& VulkanEngine::Get() { return *loadedEngine; }
@@ -59,8 +60,6 @@ bool is_visible(const RenderObject& obj, const glm::mat4& viewproj) {
         return true;
     }
 }
-
-
 
 
 /******************************************************************************
@@ -118,8 +117,12 @@ void VulkanEngine::run()
                 break;
             }
 
+            bool gizmoOver = ImGuizmo::IsOver();   
+            bool gizmoActive = ImGuizmo::IsUsing();  
+
+
             // Forward *motion & key* events only while active
-            if (_cameraActive) {
+            if (_cameraActive && !gizmoOver && !gizmoActive) {
                 if (e.type == SDL_MOUSEMOTION ||
                     e.type == SDL_MOUSEBUTTONDOWN ||
                     e.type == SDL_MOUSEBUTTONUP ||
@@ -157,6 +160,12 @@ void VulkanEngine::run()
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+        
+        ImGuizmo::BeginFrame();
+
+        glm::mat4 view = mainCamera.getViewMatrix();
+
+        glm::mat4 projection = glm::perspective(glm::radians(70.f), (float)_windowExtent.width / (float)_windowExtent.height, 10000.f, 0.1f);
 
 
         // ---------- DockSpace ------------------
@@ -179,74 +188,214 @@ void VulkanEngine::run()
         ImGui::DockSpace(dockspace_id, ImVec2(0, 0), ImGuiDockNodeFlags_None);
         ImGui::End();
 
-        // -------------- Viewport ----------------
-        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Viewport", nullptr,
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-        _viewportPos = ImGui::GetWindowPos();
-        _viewportSize = ImGui::GetWindowSize();
-
-        _viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-
-        if (_cameraActive && !_viewportFocused) {
-            _cameraActive = false;
-            mainCamera.resetInput();
-        }
-        ImGui::Image((ImTextureID)_viewportTex.DS,
-            ImVec2(1920, 1080));
-        ImGui::End();
-
-        // -------------- Camera ---------------------
-        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Camera")) {
-            ImGui::SliderFloat("Move Speed", &mainCamera.movementSpeed, 0.1f, 50.0f, "%.2f");
-            ImGui::SliderFloat("Mouse Sensitivity", &mainCamera.mouseSensitivity, 0.0001f, 0.05f, "%.4f");
-        }
-        ImGui::End();
-
-        // -------------- Background Effects ---------------------
-        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Background")) {
-            ImGui::SliderFloat("Render Scale", &renderScale, 0.3f, 1.f);
-            ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
-            ImGui::Text("Selected effect: ", selected.name);
-            ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
-            ImGui::InputFloat4("data1", (float*)&selected.data.data1);
-            ImGui::InputFloat4("data2", (float*)&selected.data.data2);
-            ImGui::InputFloat4("data3", (float*)&selected.data.data3);
-            ImGui::InputFloat4("data4", (float*)&selected.data.data4);
-        }
-        ImGui::End();
-
-        // -------------- Assets ---------------------
-        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Assets")) {
-            // Do nothing for now, but you can add asset management UI here
-            ImGui::Text("Assets management will be implemented later.");
-        }
-        ImGui::End();
-
-
-        // ----------- Style Editor ---------------
-        if (ImGui::Begin("Style Editor"))
         {
-            ImGui::ShowStyleEditor();
+            if (ImGui::Begin("Lights", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                // ── Creation Section ──
+                if (ImGui::CollapsingHeader("Create New Point Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    // decide what we’re editing: either the new‑light preview, or the selected light
+                    float* posPtr = &_newLightPos.x;
+                    float* colPtr = &_newLightColor.x;
+                    float* attnPtr = &_newLightAttenuation.x;
+
+                    if (selectedLight >= 0) {
+                        auto& L = _sceneLights[selectedLight];
+                        posPtr = &L.position.x;
+                        colPtr = &L.color.x;
+                        attnPtr = &L.attenuation.x;
+                    }
+
+                    ImGui::InputFloat3("Position", posPtr);
+                    ImGui::ColorEdit3("Color", colPtr);
+                    ImGui::InputFloat3("Attenuation", attnPtr, "%.3f");
+
+                    // the Add button still adds a new light at _newLightPos/color/attn
+                    if (ImGui::Button("Add Light")) {
+                        _sceneLights.emplace_back(
+                            glm::vec4{ _newLightPos, 0.f },
+                            glm::vec4{ _newLightColor, 0.f },
+                            _newLightAttenuation,
+                            0.f
+                        );
+                        selectedLight = (int)_sceneLights.size() - 1;
+                    }
+                }
+
+                ImGui::Separator();
+
+                if (_sceneLights.empty()) {
+                    ImGui::TextDisabled("No lights yet!");
+                }
+                else {
+                    if (ImGui::CollapsingHeader("Existing Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        for (int i = 0; i < (int)_sceneLights.size(); ++i) {
+                            ImGui::PushID(i);
+
+                            bool isSel = (selectedLight == i);
+
+                            std::string labelStr = fmt::format("Light {}", i);
+                            const char* label = labelStr.c_str();
+
+                            float textW = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
+                            if (ImGui::Selectable(label, isSel, 0, ImVec2(textW, 0)))
+                                selectedLight = i;
+
+                            if (ImGui::BeginDragDropSource()) {
+                                ImGui::SetDragDropPayload("DND_LIGHT", &i, sizeof(i));
+                                ImGui::Text("Move Light %d", i);
+                                ImGui::EndDragDropSource();
+                            }
+
+                            if (isSel) {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Deselect")) {
+                                    selectedLight = -1;
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Delete")) {
+                                    _sceneLights.erase(_sceneLights.begin() + i);
+                                    if (selectedLight == i)       selectedLight = -1;
+                                    else if (selectedLight > i)   --selectedLight;
+                                    ImGui::PopID();
+                                    break;
+                                }
+                            }
+
+                            ImGui::PopID();
+                        }
+                    }
+                }
+            }
+            ImGui::End();
         }
-        ImGui::End();
 
 
-        // ---------- Stats -----------------
-        ImGui::Begin("Stats");
+        {
+            // -------------- Viewport ----------------
+            ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+            ImGui::Begin("Viewport", nullptr,
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        ImGui::Text("frametime %f ms", stats.frameTime);
-        ImGui::Text("draw time %f ms", stats.mesh_draw_time);
-        ImGui::Text("update time %f ms", stats.scene_update_time);
-        ImGui::Text("triangles %i", stats.triangle_count);
-        ImGui::Text("draws %i", stats.drawcall_count);
-        ImGui::End();
+            _viewportPos = ImGui::GetWindowPos();
+            _viewportSize = ImGui::GetWindowSize();
+
+            _viewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+            if (_cameraActive && !_viewportFocused) {
+                _cameraActive = false;
+                mainCamera.resetInput();
+            }
+            ImGui::Image((ImTextureID)_viewportTex.DS,
+                ImVec2(1920, 1080));
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("DND_LIGHT")) {
+                    int src = *(const int*)payload->Data;
+                    ImVec2 m = ImGui::GetMousePos();
+                    glm::vec2 uv = { (m.x - _viewportPos.x) / _viewportSize.x,
+                                     (m.y - _viewportPos.y) / _viewportSize.y };
+                    glm::vec4 ndc = glm::vec4(uv * 2.f - 1.f, 0.f, 1.f);
+                    glm::mat4 invVP = glm::inverse(view * projection);
+                    glm::vec4 world = invVP * ndc;
+                    world /= world.w;
+                    _sceneLights[src].position = world;
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            if (selectedLight >= 0) {
+
+                auto& L = _sceneLights[selectedLight];
+
+                ImGuizmo::SetDrawlist();
+                ImGuizmo::SetRect(
+                    _viewportPos.x, _viewportPos.y,
+                    _viewportSize.x, _viewportSize.y);
+
+                glm::mat4 M = glm::translate(glm::mat4(1.0f), glm::vec3(L.position));
 
 
+                float mMat[16], vMat[16], pMat[16];
+                memcpy(mMat, &M, sizeof(mMat));
+                memcpy(vMat, &view, sizeof(vMat));
+                memcpy(pMat, &projection, sizeof(pMat));
+
+                ImGuizmo::Manipulate(
+                    vMat, pMat,
+                    ImGuizmo::TRANSLATE,
+                    ImGuizmo::LOCAL,
+                    mMat);
+
+                if (ImGuizmo::IsUsing()) {
+                    glm::mat4 M2; memcpy(&M2, mMat, sizeof(mMat));
+                    glm::vec3 newPos = glm::vec3(M2[3]);
+                    L.position = glm::vec4(newPos, L.position.w);
+                }
+            }
+            ImGui::End();
+        }
+
+
+        {
+            // -------------- Camera ---------------------
+            ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Camera")) {
+                ImGui::Text("Camera Pos (%f, %f, %f)", mainCamera.position.x, mainCamera.position.y, mainCamera.position.z);
+                ImGui::Text("Camera Rotation: Pitch: %f, Yaw: %f", mainCamera.pitch, mainCamera.yaw);
+                ImGui::SliderFloat("Move Speed", &mainCamera.movementSpeed, 0.1f, 50.0f, "%.2f");
+                ImGui::SliderFloat("Mouse Sensitivity", &mainCamera.mouseSensitivity, 0.0001f, 0.05f, "%.4f");
+            }
+            ImGui::End();
+        }
+
+
+        {
+            // -------------- Background Effects ---------------------
+            ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Background")) {
+                ImGui::SliderFloat("Render Scale", &renderScale, 0.3f, 1.f);
+                ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
+                ImGui::Text("Selected effect: ", selected.name);
+                ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
+                ImGui::InputFloat4("data1", (float*)&selected.data.data1);
+                ImGui::InputFloat4("data2", (float*)&selected.data.data2);
+                ImGui::InputFloat4("data3", (float*)&selected.data.data3);
+                ImGui::InputFloat4("data4", (float*)&selected.data.data4);
+            }
+            ImGui::End();
+        }
+
+
+        {
+            // -------------- Assets ---------------------
+            ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Assets")) {
+                // Do nothing for now, but you can add asset management UI here
+                ImGui::Text("Assets management will be implemented later.");
+            }
+            ImGui::End();
+        }
+
+
+        {
+            // ----------- Style Editor ---------------
+            if (ImGui::Begin("Style Editor"))
+            {
+                ImGui::ShowStyleEditor();
+            }
+            ImGui::End();
+        }
+
+
+        {
+            // ---------- Stats -----------------
+            ImGui::Begin("Stats");
+
+            ImGui::Text("frametime %f ms", stats.frameTime);
+            ImGui::Text("draw time %f ms", stats.mesh_draw_time);
+            ImGui::Text("update time %f ms", stats.scene_update_time);
+            ImGui::Text("triangles %i", stats.triangle_count);
+            ImGui::Text("draws %i", stats.drawcall_count);
+            ImGui::End();
+        }
 
         ImGui::Render();
 
@@ -262,6 +411,16 @@ void VulkanEngine::run()
 void VulkanEngine::update_scene()
 {
     auto start = std::chrono::system_clock::now();
+
+    if (!_sceneLights.empty()) {
+        void* raw = _lightBuffer.allocation->GetMappedData();
+        uint8_t* mapped = reinterpret_cast<uint8_t*>(raw);
+
+        *reinterpret_cast<uint32_t*>(mapped) = uint32_t(_sceneLights.size());
+
+        PointLight* lightsPtr = reinterpret_cast<PointLight*>(mapped + 16);
+        memcpy(lightsPtr, _sceneLights.data(), sizeof(PointLight) * _sceneLights.size());
+    }
 
     mainCamera.update(_deltaTime);
 
@@ -279,7 +438,7 @@ void VulkanEngine::update_scene()
     sceneData.sunlightColor = glm::vec4(1.f);
     sceneData.sunlightDirection = glm::vec4(0, 1, 0.5, 1.f);
 
-    loadedScenes["structure"]->Draw(glm::mat4{ 1.f }, mainDrawContext);
+    loadedScenes["sponza"]->Draw(glm::mat4{ 1.f }, mainDrawContext);
 
     auto end = std::chrono::system_clock::now();
 
@@ -333,16 +492,16 @@ void VulkanEngine::init()
     _lastFrameTime = std::chrono::high_resolution_clock::now();
     _deltaTime = 0.f;
 
-    mainCamera.position = glm::vec3(30.f, -00.f, -085.f);
-    mainCamera.pitch = 0;
-    mainCamera.yaw = 0;
+    mainCamera.position = glm::vec3(-3.3271f, 1.4940f, -0.3458f);
+    mainCamera.pitch = 0.f;
+    mainCamera.yaw = -1.6379f;
 
-    std::string structurePath = { "..\\..\\assets\\structure.glb" };
+    std::string structurePath = { "..\\..\\assets\\sponza.glb" };
     auto structureFile = loadGltf(this, structurePath);
 
     assert(structureFile.has_value());
 
-    loadedScenes["structure"] = *structureFile;
+    loadedScenes["sponza"] = *structureFile;
 
     // everything went fine
     _isInitialized = true;
@@ -501,6 +660,7 @@ void VulkanEngine::init_descriptors()
     {
         DescriptorLayoutBuilder builder;
         builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         _gpuSceneDataDescriptorLayout = builder.build(_device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
     }
 
@@ -691,6 +851,20 @@ void VulkanEngine::init_mesh_pipeline()
 
 void VulkanEngine::init_default_data()
 {
+    const size_t maxLights = 64;
+
+    size_t bufferSize = sizeof(uint32_t) + sizeof(PointLight) * maxLights;
+
+    _lightBuffer = create_buffer(
+        bufferSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VMA_MEMORY_USAGE_CPU_TO_GPU
+    );
+
+    _mainDeletionQueue.push_function([=]() {
+        destroy_buffer(_lightBuffer);
+        });
+
     uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
     _whiteImage = create_image((void*)&white, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM,
         VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -1053,6 +1227,7 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
 
     DescriptorWriter writer;
     writer.write_buffer(0, gpuSceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    writer.write_buffer(2, _lightBuffer.buffer, VK_WHOLE_SIZE, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     writer.update_set(_device, globalDescriptor);
 
     VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(_drawImage.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);

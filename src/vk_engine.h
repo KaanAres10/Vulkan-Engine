@@ -146,6 +146,8 @@ struct EngineStats {
 	float mesh_draw_time;
 };
 
+
+
 class VulkanEngine {
 public:
 	bool _isInitialized{ false };
@@ -190,6 +192,15 @@ public:
 	bool resize_requested{ false };
 
 
+
+	glm::vec3   _newLightColor = { 1,1,1 };
+	bool         _draggingLight = false;
+	glm::vec3 _newLightPos = { 0.f, 5.f, 0.f };
+	glm::vec3 _newLightAttenuation = { 1.f, 0.22f, 0.20f };
+
+	int selectedLight = -1;
+
+
 	VkInstance _instance;
 	VkDebugUtilsMessengerEXT _debug_messenger;
 	VkPhysicalDevice _chosenGPU;
@@ -208,6 +219,9 @@ public:
 
 	GPUSceneData sceneData;
 	VkDescriptorSetLayout _gpuSceneDataDescriptorLayout;
+
+	AllocatedBuffer _lightBuffer;
+	std::vector < PointLight> _sceneLights;
 
 	VkQueue _graphicsQueue;
 	uint32_t _graphicsQueueFamily;

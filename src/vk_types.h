@@ -60,6 +60,14 @@ struct GPUSceneData {
     glm::vec4 ambientColor;
     glm::vec4 sunlightDirection;
     glm::vec4 sunlightColor;
+    glm::vec4 cameraPosition;
+};
+
+struct PointLight {
+    glm::vec4 position;
+    glm::vec4 color;
+    glm::vec3 attenuation;
+    float padding;
 };
 
 enum class MaterialPass :uint8_t {
