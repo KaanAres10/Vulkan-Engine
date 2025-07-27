@@ -53,6 +53,7 @@ std::optional<AllocatedImage> load_image(VulkanEngine* engine, fastgltf::Asset& 
 
 	int width, height, nrChannels;
 
+
 	std::visit(
 		fastgltf::visitor{
 			[](auto& arg) {},
@@ -126,6 +127,11 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 {
 	fmt::print("Loading GLTF: {}", filePath);
 
+	std::filesystem::path path = filePath;
+	auto gltfDir = path.parent_path();
+	auto oldCwd = std::filesystem::current_path();
+	std::filesystem::current_path(gltfDir);
+
 	std::shared_ptr<LoadedGLTF> scene = std::make_shared<LoadedGLTF>();
 	scene->creator = engine;
 	LoadedGLTF& file = *scene.get();
@@ -139,8 +145,6 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 	data.loadFromFile(filePath);
 
 	fastgltf::Asset gltf;
-
-	std::filesystem::path path = filePath;
 
 	auto type = fastgltf::determineGltfFileType(&data);
 	if (type == fastgltf::GltfType::glTF) {
@@ -364,6 +368,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 		newmesh->meshBuffers = engine->uploadMesh(indices, vertices);
 	}
 
+	int nodeIndex = 0;
+
 	for (fastgltf::Node& node : gltf.nodes) {
 		std::shared_ptr<Node> newNode;
 
@@ -374,9 +380,12 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 		else {
 			newNode = std::make_shared<Node>();
 		}
-
+		std::string nodeName = node.name.empty()
+			? fmt::format("node_{}", nodeIndex)
+			: std::string(node.name);
+		newNode->name = nodeName;
 		nodes.push_back(newNode);
-		file.nodes[node.name.c_str()];
+		file.nodes[nodeName] = newNode;
 
 		std::visit(fastgltf::visitor{ [&](fastgltf::Node::TransformMatrix matrix) {
 									memcpy(&newNode->localTransform, matrix.data(), sizeof(matrix));
@@ -395,6 +404,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 			}, node.transform);
 		}
 
+	    ++nodeIndex;
 
 	for (int i = 0; i < gltf.nodes.size(); i++) {
 		fastgltf::Node& node = gltf.nodes[i];
@@ -412,6 +422,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 			node->refreshTransform(glm::mat4{ 1.f });
 		}
 	}
+
+	std::filesystem::current_path(oldCwd);
 
 	return scene;
 }
